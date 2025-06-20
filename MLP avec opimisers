@@ -1,0 +1,231 @@
+class MultiClassNeuralNetwork:
+    def __init__(self, layer_sizes, learning_rate=0.01, l2_lambda=0.0, optimizer="sgd", momentum=0.9):
+        self.layer_sizes = layer_sizes
+        self.learning_rate = learning_rate
+        self.l2_lambda = l2_lambda
+        self.optimizer = optimizer
+        self.momentum = momentum
+
+        self.weights, self.biases = [], []
+        self.velocities_w, self.velocities_b = [], []
+        np.random.seed(42)
+        for i in range(len(layer_sizes) - 1):
+            w = np.random.randn(layer_sizes[i], layer_sizes[i + 1]) * np.sqrt(2. / layer_sizes[i])
+            b = np.zeros((1, layer_sizes[i + 1]))
+            self.weights.append(w)
+            self.biases.append(b)
+            self.velocities_w.append(np.zeros_like(w))
+            self.velocities_b.append(np.zeros_like(b))
+
+    def forward(self, X):
+        self.activations = [X]
+        self.z_values = []
+        for l in range(len(self.weights) - 1):
+            z = self.activations[-1] @ self.weights[l] + self.biases[l]
+            a = relu(z)
+            self.z_values.append(z)
+            self.activations.append(a)
+        z_out = self.activations[-1] @ self.weights[-1] + self.biases[-1]
+        a_out = softmax(z_out)
+        self.z_values.append(z_out)
+        self.activations.append(a_out)
+        return a_out
+         def compute_loss(self, y_true, y_pred):
+        y_pred = np.clip(y_pred, 1e-15, 1 - 1e-15)
+        m = y_true.shape[0]
+        loss = -np.sum(y_true * np.log(y_pred)) / m
+        l2_penalty = (self.l2_lambda / (2 * m)) * sum(np.sum(w ** 2) for w in self.weights)
+        return loss + l2_penalty
+
+    def backward(self, y_true):
+        m = y_true.shape[0]
+        dZ = self.activations[-1] - y_true
+        self.d_weights = []
+        self.d_biases = []
+
+        for l in reversed(range(len(self.weights))):
+            a_prev = self.activations[l]
+            dw = (a_prev.T @ dZ) / m + (self.l2_lambda / m) * self.weights[l]
+            db = np.sum(dZ, axis=0, keepdims=True) / m
+            self.d_weights.insert(0, dw)
+            self.d_biases.insert(0, db)
+            if l > 0:
+                dA_prev = dZ @ self.weights[l].T
+                dZ = dA_prev * relu_derivative(self.z_values[l - 1])
+
+    def update_parameters(self):
+        for l in range(len(self.weights)):
+            if self.optimizer == "momentum":
+                self.velocities_w[l] = self.momentum * self.velocities_w[l] - self.learning_rate * self.d_weights[l]
+                self.velocities_b[l] = self.momentum * self.velocities_b[l] - self.learning_rate * self.d_biases[l]
+                self.weights[l] += self.velocities_w[l]
+                self.biases[l] += self.velocities_b[l]
+            elif self.optimizer == "nesterov":
+                prev_vw = self.velocities_w[l].copy()
+                prev_vb = self.velocities_b[l].copy()
+                self.velocities_w[l] = self.momentum * self.velocities_w[l] - self.learning_rate * self.d_weights[l]
+                self.velocities_b[l] = self.momentum * self.velocities_b[l] - self.learning_rate * self.d_biases[l]
+                self.weights[l] += -self.momentum * prevvw + (1 + self.momentum) * self.velocities_w[l]
+                self.biases[l] += -self.momentum * prev_vb + (1 + self.momentum) * self.velocities_b[l]
+            else:
+                self.weights[l] -= self.learning_rate * self.d_weights[l]
+                self.biases[l] -= self.learning_rate * self.d_biases[l]
+
+    def predict(self, X):
+        probs = self.forward(X)
+        return np.argmax(probs, axis=1)
+
+    def train(self, X, y, X_val, y_val, epochs=50, batch_size=64):
+        history = {
+            "train_loss": [], "val_loss": [],
+            "train_acc": [], "val_acc": []
+        }
+        for epoch in range(epochs):
+            indices = np.random.permutation(X.shape[0])
+            X_shuffled, y_shuffled = X[indices], y[indices]
+            for i in range(0, X.shape[0], batch_size):
+                X_batch = X_shuffled[i:i + batch_size]
+                y_batch = y_shuffled[i:i + batch_size]
+                outputs = self.forward(X_batch)
+                self.backward(y_batch)
+                self.update_parameters()
+
+            train_outputs = self.forward(X)
+            val_outputs = self.forward(X_val)
+            train_loss = self.compute_loss(y, train_outputs)
+            val_loss = self.compute_loss(y_val, val_outputs)
+            train_acc = np.mean(np.argmax(train_outputs, axis=1) == np.argmax(y, axis=1))
+            val_acc = np.mean(np.argmax(val_outputs, axis=1) == np.argmax(y_val, axis=1))
+            history["train_loss"].append(train_loss)
+            history["val_loss"].append(val_loss)
+             history["train_acc"].append(train_acc)
+            history["val_acc"].append(val_acc)
+
+            print(f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}")
+
+        return history["train_loss"], history["val_loss"], history["train_acc"], history["val_acc"]
+
+
+ 
+          
+
+
+DATA_DIR = r'C:\Users\PC\Desktop\iA\AMHCD_64\AMHCD_64'
+
+try:
+    labels_df = pd.read_csv(os.path.join(DATA_DIR, 'labels-map.csv'))
+    assert 'image_path' in labels_df.columns and 'label' in labels_df.columns
+except FileNotFoundError:
+    print("CSV non trouvé. Chargement depuis l'arborescence.")
+    image_paths, labels = [], []
+    for label_dir in os.listdir(DATA_DIR):
+        path = os.path.join(DATA_DIR, label_dir)
+        if os.path.isdir(path):
+            for img_file in os.listdir(path):
+                image_paths.append(os.path.join(label_dir, img_file))
+                labels.append(label_dir)
+    labels_df = pd.DataFrame({'image_path': image_paths, 'label': labels})
+assert not labels_df.empty
+
+label_encoder = LabelEncoder()
+labels_df['label_encoded'] = label_encoder.fit_transform(labels_df['label'])
+num_classes = len(label_encoder.classes_)
+def load_and_preprocess_image(image_path, target_size=(32, 32)):
+    full_path = os.path.join(DATA_DIR, image_path)
+    assert os.path.exists(full_path), f"Image not found: {full_path}"
+    img = cv2.imread(full_path, cv2.IMREAD_GRAYSCALE)
+    assert img is not None, f"Failed to load image: {full_path}"
+    img = cv2.resize(img, target_size)
+    img = img.astype(np.float32) / 255.0
+    return img.flatten()
+X = np.array([load_and_preprocess_image(path) for path in labels_df['image_path']])
+y = labels_df['label_encoded'].values
+assert X.shape[0] == y.shape[0]
+assert X.shape[1] == 32 * 32
+# Séparation des jeux
+X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
+X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.25, stratify=y_temp, random_state=42)
+# One-hot
+encoder = OneHotEncoder(sparse_output=False)
+y_train_one_hot = encoder.fit_transform(y_train.reshape(-1, 1))
+y_val_one_hot = encoder.transform(y_val.reshape(-1, 1))
+y_test_one_hot = encoder.transform(y_test.reshape(-1, 1))
+
+print(f"Train: {X_train.shape[0]}, Val: {X_val.shape[0]}, Test: {X_test.shape[0]}")
+optimizers = ["sgd", "adam","nesterov"]
+results = {}
+from sklearn.metrics import confusion_matrix, classification_report
+import seaborn as sns
+
+for opt in optimizers:
+    print(f"\n=== Entraînement avec optimiseur : {opt} ===")
+    
+    if opt == "sgd":
+        nn = MultiClassNeuralNetwork(
+            layer_sizes=[X_train.shape[1], 64, 32, num_classes],
+            learning_rate=0.01,
+            l2_lambda=0.01
+        )
+        elif opt == "adam":
+        nn = MultiClassNeuralNetwork(
+            layer_sizes=[X_train.shape[1], 64, 32, num_classes],
+            learning_rate=0.01,
+            l2_lambda=0.01,
+            optimizer="adam"
+        )
+    elif opt == "nesterov":
+        nn = MultiClassNeuralNetwork(
+            layer_sizes=[X_train.shape[1], 64, 32, num_classes],
+            learning_rate=0.01,
+            l2_lambda=0.01,
+            optimizer="nesterov",
+             momentum=0.9
+        )
+    
+    train_loss, val_loss, train_acc, val_acc = nn.train(
+        X_train, y_train_one_hot,
+        X_val, y_val_one_hot,
+        epochs=100,
+        batch_size=32
+    )
+    
+    y_pred_train = nn.predict(X_train)
+    y_pred_test = nn.predict(X_test)
+    
+    acc_train = np.mean(y_pred_train == y_train)
+    acc_test = np.mean(y_pred_test == y_test)
+    
+    print(f"Train accuracy pour {opt} : {acc_train:.4f}")
+    print(f"Test accuracy pour {opt} : {acc_test:.4f}")
+    
+    # Rapport classification test
+    print("\nRapport de classification (test) :")
+    print(classification_report(y_test, y_pred_test, target_names=label_encoder.classes_))
+    
+    # Matrice de confusion train
+    cm_train = confusion_matrix(y_train, y_pred_train)
+    plt.figure(figsize=(8,6))
+    sns.heatmap(cm_train, annot=True, fmt='d', cmap='Blues')
+    plt.title(f'Matrice de confusion - Train - Optimiseur {opt}')
+    plt.xlabel('Prédit')
+    plt.ylabel('Réel')
+    plt.show()
+    
+    # Matrice de confusion test
+    cm_test = confusion_matrix(y_test, y_pred_test)
+    plt.figure(figsize=(8,6))
+    sns.heatmap(cm_test, annot=True, fmt='d', cmap='Blues')
+    plt.title(f'Matrice de confusion - Test - Optimiseur {opt}')
+    plt.xlabel('Prédit')
+    plt.ylabel('Réel')
+    plt.show()
+    
+    # Stockage des résultats
+    results[opt] = {
+        "train_loss": train_loss,
+        "val_loss": val_loss,
+        "train_acc": train_acc,
+        "val_acc": val_acc,
+        "test_acc": acc_test
+    }
+
